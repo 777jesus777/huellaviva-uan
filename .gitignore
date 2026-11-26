@@ -1,0 +1,22 @@
+# Secretos y entorno
+.env
+.env.*
+!.env.example
+
+# Dependencias y build
+node_modules/
+dist/
+.vercel/
+.netlify/
+
+# Supabase local
+supabase/.branches/
+supabase/.temp/
+
+# Dumps y datos reales (NUNCA subir)
+*.dump
+*.backup
+dump*.sql
+
+# Sistema
+.DS_Store
