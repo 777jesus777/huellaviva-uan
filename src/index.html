@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HuellaViva UAN · prototipo académico</title>
+<style>
+:root{--bg:#f4f8f7;--fg:#14302c;--card:#fff;--ac:#12365a;--gr:#1f9d6b;--btn:#fff;--bd:#d3e2de;--warn:#fff1c9}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1a1a;--fg:#e4f1ee;--card:#162726;--ac:#8cc4ff;--gr:#3ecf9a;--btn:#0e1a1a;--bd:#29403d;--warn:#40361a}}
+*{box-sizing:border-box}
+body{margin:0;font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg)}
+header{padding:12px 16px;border-bottom:3px solid var(--gr);display:flex;gap:12px;align-items:center;flex-wrap:wrap;background:var(--card)}
+header b{color:var(--ac);font-size:1.15rem}
+#nav{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+main{max-width:780px;margin:0 auto;padding:16px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:18px;margin-bottom:16px}
+h2{margin:.2em 0 .5em;color:var(--ac)}
+label{display:block;margin:12px 0 4px;font-weight:600}
+input,select{font:inherit;width:100%;padding:9px;border-radius:6px;border:1px solid var(--bd);background:var(--bg);color:var(--fg)}
+input[type=checkbox]{width:auto;margin-right:6px}
+button{font:inherit;cursor:pointer;background:var(--ac);color:var(--btn);border:0;border-radius:6px;padding:9px 16px}
+button.s{background:transparent;color:var(--fg);border:1px solid var(--bd)}
+button:disabled{opacity:.5}
+:focus-visible{outline:3px solid var(--gr);outline-offset:2px}
+.warn{background:var(--warn);padding:10px 12px;border-radius:6px;margin:12px 0;font-size:.92rem}
+.sm{font-size:.88rem;opacity:.85}.err{color:#c0392b}
+.big{font-size:2.4rem;font-weight:700;color:var(--ac);line-height:1.1}
+.wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:.92rem}
+th,td{text-align:left;padding:7px 6px;border-bottom:1px solid var(--bd)}
+</style>
+</head>
+<body>
+<header><b>HuellaViva UAN</b><span class="sm">Prototipo académico</span><nav id="nav"></nav></header>
+<main id="app">Cargando…</main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script>
+const $ = s => document.querySelector(s), app = $('#app');
+const esc = t => String(t ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = n => Number(n).toLocaleString('es-CO', {maximumFractionDigits: 2});
+const CAT = {electricidad:'Electricidad', combustibles:'Gas y combustibles', transporte:'Transporte a campus', viajes_aereos:'Viajes aéreos'};
+const L = k => CAT[k] || k;
+const NOTE = 'Estimación educativa y de diagnóstico. No es un inventario institucional verificado, ni una certificación, compensación o resultado oficial de RENARE.';
+const msg = (t, c = 'err') => `<p class="${c}">${esc(t)}</p>`;
+if (!window.HV || !HV.url || !HV.anonKey) {
+  app.innerHTML = '<div class="card err">Falta completar <code>src/config.js</code> con la URL y la clave pública de Supabase.</div>';
+  throw new Error('config');
+}
+const sb = supabase.createClient(HV.url, HV.anonKey);
+let S = {};
+
+async function init() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { S = {}; nav(); return viewLogin(); }
+  S.user = session.user;
+  const { data: p } = await sb.from('profiles').select('*').eq('id', S.user.id).maybeSingle();
+  S.profile = p;
+  const { data: adm } = await sb.rpc('is_admin');
+  S.isAdmin = adm === true;
+  nav();
+  if (!p) return S.isAdmin ? viewAdmin() : viewProfile();
+  viewHome();
+}
+
+function nav() {
+  $('#nav').innerHTML = S.user ? `${S.profile ? '<button class="s" id="n1">Mi encuesta</button>' : ''}${S.isAdmin ? '<button class="s" id="n2">Dashboard</button>' : ''}<button class="s" id="n3">Salir</button>` : '';
+  if ($('#n1')) $('#n1').onclick = viewHome;
+  if ($('#n2')) $('#n2').onclick = viewAdmin;
+  if ($('#n3')) $('#n3').onclick = async () => { await sb.auth.signOut(); init(); };
+}
+
+function viewLogin() {
+  app.innerHTML = `<div class="card"><h2>Ingresar</h2><p class="sm">${NOTE}</p>
+  <label for="em">Correo</label><input id="em" type="email" autocomplete="email">
+  <label for="pw">Contraseña (mínimo 8 caracteres)</label><input id="pw" type="password" autocomplete="current-password">
+  <p><button id="in">Ingresar</button> <button class="s" id="up">Crear cuenta</button></p><div id="m"></div></div>`;
+  const go = async fn => {
+    const r = await fn({ email: $('#em').value.trim(), password: $('#pw').value });
+    if (r.error) return $('#m').innerHTML = msg(r.error.message);
+    if (!r.data.session) return $('#m').innerHTML = msg('Revisa tu correo para confirmar la cuenta y luego ingresa.', 'sm');
+    init();
+  };
+  $('#in').onclick = () => go(a => sb.auth.signInWithPassword(a));
+  $('#up').onclick = () => go(a => sb.auth.signUp(a));
+}
+
+function viewProfile() {
+  app.innerHTML = `<div class="card"><h2>Tu grupo</h2>
+  <p class="sm">Solo guardamos tu grupo y, si quieres, el campus. No pedimos documento, dirección ni placa.</p>
+  <label for="g">Grupo</label><select id="g"><option value="estudiante">Estudiante</option><option value="profesor">Profesor</option><option value="administrativo">Administrativo</option></select>
+  <label for="c">Campus (opcional)</label><input id="c" maxlength="60">
+  <p><button id="ok">Continuar</button></p><div id="m"></div></div>`;
+  $('#ok').onclick = async () => {
+    const { error } = await sb.from('profiles').insert({ id: S.user.id, tipo_usuario: $('#g').value, campus: $('#c').value.trim() || null });
+    if (error) return $('#m').innerHTML = msg(error.message);
+    init();
+  };
+}
+
+async function viewHome() {
+  nav(); app.innerHTML = 'Cargando…';
+  const { data: cv } = await sb.from('consent_versions').select('*').eq('active', true).order('valid_from', { ascending: false }).limit(1).maybeSingle();
+  if (!cv) return app.innerHTML = `<div class="card">${msg('No hay un aviso de consentimiento activo.')}</div>`;
+  const { data: cs } = await sb.from('consents').select('id').eq('consent_version_id', cv.id).is('revoked_at', null).limit(1);
+  if (!cs || !cs.length) return viewConsent(cv);
+  const today = new Date().toISOString().slice(0, 10);
+  const { data: ps } = await sb.from('survey_periods').select('*').eq('status', 'abierto');
+  const per = (ps || []).filter(p => p.start_date <= today && p.end_date >= today).sort((a, b) => b.start_date.localeCompare(a.start_date))[0];
+  if (!per) return app.innerHTML = `<div class="card"><h2>Sin periodo abierto</h2><p>Por ahora no hay una encuesta habilitada. Vuelve cuando el área ambiental abra un periodo.</p></div>`;
+  const { data: sv } = await sb.from('surveys').select('*, activity_answers(*)').eq('period_id', per.id).maybeSingle();
+  if (sv && sv.status === 'enviada') return viewReport(per, sv);
+  viewSurvey(per, sv);
+}
+
+function viewConsent(cv) {
+  app.innerHTML = `<div class="card"><h2>Consentimiento informado</h2>
+  <p>La Universidad Antonio Nariño, como responsable que deberá identificarse y validar este aviso institucionalmente, solicita sus respuestas para estimar su huella de carbono y generar informes individuales y estadísticas agregadas de la comunidad universitaria. La participación es voluntaria. Las respuestas se tratarán para la finalidad informada y se protegerán con controles de acceso. Puede consultar, actualizar o solicitar la atención de sus derechos por el canal institucional indicado.</p>
+  <p class="warn">Versión ${esc(cv.version)}: borrador del prototipo, pendiente de revisión por la instancia institucional de protección de datos. No constituye concepto legal.</p>
+  <label><input type="checkbox" id="ck">Acepto el tratamiento de mis respuestas para esta finalidad.</label>
+  <p><button id="ok">Aceptar y continuar</button></p><div id="m"></div></div>`;
+  $('#ok').onclick = async () => {
+    if (!$('#ck').checked) return $('#m').innerHTML = msg('Marca la casilla para continuar.');
+    const { error } = await sb.from('consents').insert({ profile_id: S.user.id, consent_version_id: cv.id });
+    if (error) return $('#m').innerHTML = msg(error.message);
+    viewHome();
+  };
+}
+
+function viewSurvey(per, sv) {
+  const A = Object.fromEntries((sv?.activity_answers || []).map(a => [a.question_code, a]));
+  const v = k => esc(A[k]?.numeric_value ?? '');
+  const tcode = ['TRANS_BUS_KM', 'TRANS_AUTO_KM', 'TRANS_MOTO_KM'].find(k => A[k]);
+  app.innerHTML = `<div class="card"><h2>Encuesta: ${esc(per.name)}</h2>
+  <p class="sm">Responde con los datos del periodo ${esc(per.start_date)} a ${esc(per.end_date)}. Los campos con * son obligatorios; el resto es opcional y puedes dejarlo vacío.</p>
+  <label for="pe">Personas que comparten el consumo de tu hogar *</label><input id="pe" type="number" min="1" max="30" step="1" value="${v('HOGAR_PERSONAS')}">
+  <label for="el">Electricidad del hogar en el periodo (kWh) *</label><input id="el" type="number" min="0" max="20000" step="any" value="${v('ELEC_KWH')}">
+  <label for="gs">Gas natural del hogar en el periodo (m³)</label><input id="gs" type="number" min="0" max="5000" step="any" value="${v('GAS_M3')}">
+  <label for="tm">Medio principal para ir al campus</label><select id="tm"><option value="">No aplica (a pie, bicicleta o no asistí)</option><option value="TRANS_BUS_KM">Bus</option><option value="TRANS_AUTO_KM">Auto</option><option value="TRANS_MOTO_KM">Moto</option></select>
+  <label for="km">Kilómetros totales en el periodo (ida y vuelta, todos los días)</label><input id="km" type="number" min="0" max="20000" step="any" value="${tcode ? v(tcode) : ''}">
+  <label for="av">Trayectos aéreos nacionales en el periodo</label><input id="av" type="number" min="0" max="50" step="1" value="${v('AIR_NAC_TRAYECTOS')}">
+  <label><input type="checkbox" id="est" ${Object.values(A).some(a => a.is_estimated) ? 'checked' : ''}>Algunos de estos datos son estimados, no medidos.</label>
+  <p><button id="sv">Guardar y calcular</button></p><div id="m"></div></div>`;
+  $('#tm').value = tcode || '';
+  $('#sv').onclick = async () => {
+    const num = id => { const x = $(id).value; return x === '' ? null : Number(x); };
+    const est = $('#est').checked, rows = [];
+    const add = (category, code, val, unit) => { if (val !== null) rows.push({ category, question_code: code, numeric_value: val, unit, is_estimated: est }); };
+    const pe = num('#pe'), el = num('#el');
+    if (!(pe >= 1) || el === null || !(el >= 0)) return $('#m').innerHTML = msg('Indica las personas del hogar (mínimo 1) y los kWh (0 o más).');
+    add('hogar', 'HOGAR_PERSONAS', pe, 'personas'); add('electricidad', 'ELEC_KWH', el, 'kWh');
+    add('combustibles', 'GAS_M3', num('#gs'), 'm3');
+    const tm = $('#tm').value, km = num('#km');
+    if (tm && km !== null) add('transporte', tm, km, 'km');
+    add('viajes_aereos', 'AIR_NAC_TRAYECTOS', num('#av'), 'trayecto');
+    if (rows.some(r => !(r.numeric_value >= 0))) return $('#m').innerHTML = msg('Todos los valores deben ser números de 0 en adelante.');
+    $('#sv').disabled = true;
+    try {
+      let id = sv?.id, r;
+      if (!id) { r = await sb.from('surveys').insert({ profile_id: S.user.id, period_id: per.id }).select('id').single(); if (r.error) throw r.error; id = r.data.id; }
+      r = await sb.from('activity_answers').delete().eq('survey_id', id); if (r.error) throw r.error;
+      r = await sb.from('activity_answers').insert(rows.map(x => ({ ...x, survey_id: id }))); if (r.error) throw r.error;
+      r = await sb.from('surveys').update({ status: 'enviada', submitted_at: new Date().toISOString() }).eq('id', id); if (r.error) throw r.error;
+      r = await sb.rpc('calculate_my_survey', { p_survey_id: id }); if (r.error) throw r.error;
+      viewHome();
+    } catch (e) { $('#m').innerHTML = msg(e.message); $('#sv').disabled = false; }
+  };
+}
+
+async function viewReport(per, sv) {
+  const { data: c } = await sb.from('calculations')
+    .select('*, calculation_details(category,activity_value,converted_value,emissions_kgco2e,emission_factors(source,factor_value,unit_activity,version,reference_year,is_synthetic))')
+    .eq('survey_id', sv.id).order('calculated_at', { ascending: false }).limit(1).maybeSingle();
+  if (!c) return app.innerHTML = `<div class="card">${msg('No se encontró el cálculo. Edita y guarda de nuevo.')}<button id="ed">Editar respuestas</button></div>`, $('#ed').onclick = () => viewSurvey(per, sv);
+  const d = c.calculation_details || [], by = {};
+  d.forEach(x => by[x.category] = (by[x.category] || 0) + Number(x.emissions_kgco2e));
+  const top = Object.entries(by).sort((a, b) => b[1] - a[1])[0];
+  const synth = c.used_draft_factors || d.some(x => x.emission_factors?.is_synthetic);
+  app.innerHTML = `<div class="card"><h2>Tu informe: ${esc(per.name)}</h2>
+  <div class="big">${fmt(c.total_kgco2e)} kg CO₂e</div><div class="sm">${fmt(c.total_kgco2e / 1000)} t CO₂e en el periodo · calculado el ${esc(new Date(c.calculated_at).toLocaleString('es-CO'))} · método ${esc(c.methodology_version)}</div>
+  ${synth ? '<p class="warn"><b>Factores de demostración.</b> Este cálculo usa factores sintéticos e ilustrativos; la cifra no es real.</p>' : ''}
+  <p class="warn">${NOTE}</p></div>
+  <div class="card"><h2>Desglose</h2><div class="wrap"><table><tr><th>Categoría</th><th>Actividad usada</th><th>Factor</th><th>kg CO₂e</th></tr>
+  ${d.map(x => `<tr><td>${esc(L(x.category))}</td><td>${fmt(x.converted_value)} ${esc(x.emission_factors?.unit_activity)}</td><td>${fmt(x.emission_factors?.factor_value)} (v. ${esc(x.emission_factors?.version)}, ${esc(x.emission_factors?.reference_year)})</td><td>${fmt(x.emissions_kgco2e)}</td></tr>`).join('')}</table></div>
+  <p class="sm">Fuentes de los factores: ${esc([...new Set(d.map(x => x.emission_factors?.source))].join('; '))}</p>
+  ${top ? `<p>Tu mayor contribución en este periodo es <b>${esc(L(top[0]))}</b>. Ahí un cambio pequeño tiene el mayor efecto.</p>` : ''}</div>
+  <div class="card"><h2>Supuestos y límites</h2><p class="sm">Incluye solo electricidad y gas del hogar (divididos entre las personas indicadas), desplazamiento a campus y vuelos nacionales. No incluye alimentación, consumo de bienes, residuos ni ciclo de vida completo. Los datos estimados aumentan la incertidumbre.</p>
+  <button id="ed">Editar respuestas</button></div>`;
+  $('#ed').onclick = () => viewSurvey(per, sv);
+}
+
+async function viewAdmin() {
+  nav();
+  const { data: ps } = await sb.from('survey_periods').select('*').order('start_date', { ascending: false });
+  if (!ps || !ps.length) return app.innerHTML = `<div class="card"><h2>Dashboard</h2><p>Aún no hay periodos creados.</p></div>`;
+  app.innerHTML = `<div class="card"><h2>Dashboard agregado</h2>
+  <p class="sm">${NOTE} Solo se muestran grupos con al menos 10 respuestas (regla de diseño del proyecto). Los participantes no representan a toda la comunidad.</p>
+  <label for="pp">Periodo</label><select id="pp">${ps.map(p => `<option value="${esc(p.id)}">${esc(p.name)} (${esc(p.start_date)} a ${esc(p.end_date)})</option>`).join('')}</select>
+  <label for="gg">Grupo</label><select id="gg"><option value="">Todos</option><option value="estudiante">Estudiante</option><option value="profesor">Profesor</option><option value="administrativo">Administrativo</option></select>
+  <p><button id="go">Consultar</button> <button class="s" id="csv" disabled>Descargar CSV</button></p><div id="m"></div></div><div id="out"></div>`;
+  let G = null;
+  $('#go').onclick = async () => {
+    const a = { p_period_id: $('#pp').value, p_group: $('#gg').value || null };
+    const [s, c] = await Promise.all([sb.rpc('dashboard_summary', a), sb.rpc('dashboard_by_category', a)]);
+    if (s.error || c.error) return $('#m').innerHTML = msg((s.error || c.error).message);
+    $('#m').innerHTML = '';
+    G = { per: ps.find(p => p.id === a.p_period_id).name, s: s.data, c: c.data };
+    $('#csv').disabled = !s.data.length;
+    $('#out').innerHTML = !s.data.length ? `<div class="card"><p>Ningún grupo llega a 10 respuestas enviadas en este periodo, o aún no hay respuestas.</p></div>` :
+      `<div class="card"><h2>Resumen por grupo</h2><div class="wrap"><table><tr><th>Grupo</th><th>Participantes</th><th>Promedio kg CO₂e</th><th>Mediana kg CO₂e</th></tr>
+      ${s.data.map(r => `<tr><td>${esc(r.grupo)}</td><td>${esc(r.participantes)}</td><td>${fmt(r.promedio_kgco2e)}</td><td>${fmt(r.mediana_kgco2e)}</td></tr>`).join('')}</table></div></div>
+      <div class="card"><h2>Promedio por categoría</h2><div class="wrap"><table><tr><th>Grupo</th><th>Categoría</th><th>Participantes</th><th>Promedio kg CO₂e</th></tr>
+      ${c.data.map(r => `<tr><td>${esc(r.grupo)}</td><td>${esc(L(r.categoria))}</td><td>${esc(r.participantes)}</td><td>${fmt(r.promedio_kgco2e)}</td></tr>`).join('')}</table></div></div>`;
+  };
+  $('#csv').onclick = () => {
+    const q = x => `"${String(x ?? '').replace(/"/g, '""')}"`;
+    const lines = [['periodo', 'tipo', 'grupo', 'categoria', 'participantes', 'promedio_kgco2e', 'mediana_kgco2e'].join(',')];
+    G.s.forEach(r => lines.push([G.per, 'total', r.grupo, '', r.participantes, r.promedio_kgco2e, r.mediana_kgco2e].map(q).join(',')));
+    G.c.forEach(r => lines.push([G.per, 'categoria', r.grupo, r.categoria, r.participantes, r.promedio_kgco2e, ''].map(q).join(',')));
+    const u = URL.createObjectURL(new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' }));
+    const l = document.createElement('a'); l.href = u; l.download = 'huellaviva_agregados.csv'; l.click(); URL.revokeObjectURL(u);
+  };
+}
+
+init();
+</script>
+</body>
+</html>
